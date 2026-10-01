@@ -26,22 +26,21 @@ jobs:
         with:
           node-version: 22
 
-      - name: Scaffold Starlight and prepare content
+      - name: Scaffold Starlight project
         run: |
           echo "==> 1. Initializing Starlight project..."
           npx --yes create-astro@latest .starlight-build --template starlight --yes --no-git --no-install
           
           cd .starlight-build
           npm install
-          cd ..
+          rm -rf src/content/docs/*
 
-          echo "==> 2. Resetting default template docs..."
-          rm -rf .starlight-build/src/content/docs/*
-
-          echo "==> 3. Syncing repository markdown files and assets..."
+      - name: Sync content and configure site
+        run: |
+          echo "==> 2. Syncing repository markdown files and assets..."
           rsync -av --exclude='.git' --exclude='.github' --exclude='.starlight-build' --exclude='astro.config.mjs' ./ .starlight-build/src/content/docs/
 
-          echo "==> 4. Ensuring single landing page and preventing duplicate entries..."
+          echo "==> 3. Ensuring single landing page and preventing duplicates..."
           if [ -f .starlight-build/src/content/docs/README.md ]; then
             if [ ! -f .starlight-build/src/content/docs/index.md ] && [ ! -f .starlight-build/src/content/docs/index.mdx ]; then
               mv .starlight-build/src/content/docs/README.md .starlight-build/src/content/docs/index.md
@@ -50,7 +49,7 @@ jobs:
             fi
           fi
 
-          echo "==> 5. Syncing branding assets if present..."
+          echo "==> 4. Syncing branding assets if present..."
           mkdir -p .starlight-build/src/assets
           for ext in svg png webp; do
             if [ -f "logo.${ext}" ]; then
@@ -61,95 +60,94 @@ jobs:
             fi
           done
 
-          echo "==> 6. Configuring Starlight (custom astro.config.mjs or fallback)..."
+          echo "==> 5. Applying Starlight configuration..."
           if [ -f astro.config.mjs ]; then
             echo "Using custom astro.config.mjs from repository root..."
             cp astro.config.mjs .starlight-build/astro.config.mjs
           else
-            echo "No custom astro.config.mjs found, generating progressive default config..."
-            cat << 'EOF' > .starlight-build/astro.config.mjs
-import { defineConfig } from 'astro/config';
-import starlight from '@astrojs/starlight';
-import fs from 'node:fs';
+            echo "Generating fallback default astro.config.mjs..."
+            node -e '
+              const fs = require("fs");
+              const hasLogo = fs.existsSync("./src/assets/logo.svg")
+                ? "./src/assets/logo.svg"
+                : fs.existsSync("./src/assets/logo.png")
+                ? "./src/assets/logo.png"
+                : undefined;
+              const config = `import { defineConfig } from "astro/config";
+              import starlight from "@astrojs/starlight";
 
-const detectedLogo = fs.existsSync('./src/assets/logo.svg')
-  ? './src/assets/logo.svg'
-  : fs.existsSync('./src/assets/logo.png')
-  ? './src/assets/logo.png'
-  : undefined;
-
-export default defineConfig({
-  integrations: [
-    starlight({
-      title: process.env.SITE_TITLE || 'The DAO',
-      ...(detectedLogo ? { logo: { src: detectedLogo } } : {}),
-      social: {
-        github: 'https://github.com/excing/TheDAO',
-      },
-    }),
-  ],
-});
-EOF
+              export default defineConfig({
+                integrations: [
+                  starlight({
+                    title: process.env.SITE_TITLE || "The DAO",
+                    ${hasLogo ? `logo: { src: "${hasLogo}" },` : ""}
+                    social: {
+                      github: "https://github.com/excing/TheDAO",
+                    },
+                  }),
+                ],
+              });`;
+              fs.writeFileSync(".starlight-build/astro.config.mjs", config);
+            '
           fi
 
-          echo "==> 7. Normalizing Frontmatter metadata and deduplicating main headings..."
-          node - << 'EOF'
-          const fs = require('fs');
-          const path = require('path');
+      - name: Normalize frontmatter and deduplicate headings
+        run: |
+          echo "==> 6. Processing markdown frontmatter..."
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
 
-          function processDirectory(dirPath) {
-            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-            for (const entry of entries) {
-              const fullPath = path.join(dirPath, entry.name);
-              if (entry.isDirectory()) {
-                processDirectory(fullPath);
-              } else if (entry.name.endsWith('.md') || entry.name.endsWith('.mdx')) {
-                let content = fs.readFileSync(fullPath, 'utf8');
-                let title = '';
+            function processDirectory(dirPath) {
+              const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+              for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry.name);
+                if (entry.isDirectory()) {
+                  processDirectory(fullPath);
+                } else if (entry.name.endsWith(".md") || entry.name.endsWith(".mdx")) {
+                  let content = fs.readFileSync(fullPath, "utf8");
+                  let title = "";
 
-                if (!content.startsWith('---')) {
-                  // Case 1: No frontmatter present. Extract H1 or fallback to filename.
-                  const headingMatch = content.match(/^#\s+(.+)$/m);
-                  title = headingMatch ? headingMatch[1].trim() : path.parse(entry.name).name;
-                  let body = content;
-                  if (headingMatch) {
-                    body = body.replace(/^\s*#\s+[^\r\n]+[\r\n]*/m, '');
-                  }
-                  content = `---\ntitle: "${title.replace(/"/g, '\\"')}"\n---\n\n` + body.trimStart();
-                } else {
-                  // Case 2: Frontmatter exists. Ensure title is present and strip duplicate H1 from body.
-                  const endIdx = content.indexOf('---', 3);
-                  if (endIdx !== -1) {
-                    let frontmatter = content.slice(3, endIdx);
-                    let body = content.slice(endIdx + 3);
-
-                    const titleMatch = frontmatter.match(/^\s*title\s*:\s*["']?(.*?)["']?\s*$/m);
-                    if (titleMatch) {
-                      title = titleMatch[1].trim();
-                    } else {
-                      const headingMatch = body.match(/^#\s+(.+)$/m);
-                      title = headingMatch ? headingMatch[1].trim() : path.parse(entry.name).name;
-                      frontmatter = `\ntitle: "${title.replace(/"/g, '\\"')}"` + frontmatter;
+                  if (!content.startsWith("---")) {
+                    const headingMatch = content.match(/^#\s+(.+)$/m);
+                    title = headingMatch ? headingMatch[1].trim() : path.parse(entry.name).name;
+                    let body = content;
+                    if (headingMatch) {
+                      body = body.replace(/^\s*#\s+[^\r\n]+[\r\n]*/m, "");
                     }
+                    content = `---\ntitle: "${title.replace(/"/g, "\\\"")}"\n---\n\n` + body.trimStart();
+                  } else {
+                    const endIdx = content.indexOf("---", 3);
+                    if (endIdx !== -1) {
+                      let frontmatter = content.slice(3, endIdx);
+                      let body = content.slice(endIdx + 3);
 
-                    // Remove redundant H1 from body if it matches the page title
-                    const trimmedBody = body.trimStart();
-                    const leadingHeadingMatch = trimmedBody.match(/^#\s+(.+)$/m);
-                    if (leadingHeadingMatch && leadingHeadingMatch[1].trim() === title) {
-                      body = body.replace(/^\s*#\s+[^\r\n]+[\r\n]*/m, '');
+                      const titleMatch = frontmatter.match(/^\s*title\s*:\s*["\x27]?(.*?)["\x27]?\s*$/m);
+                      if (titleMatch) {
+                        title = titleMatch[1].trim();
+                      } else {
+                        const headingMatch = body.match(/^#\s+(.+)$/m);
+                        title = headingMatch ? headingMatch[1].trim() : path.parse(entry.name).name;
+                        frontmatter = `\ntitle: "${title.replace(/"/g, "\\\"")}"` + frontmatter;
+                      }
+
+                      const trimmedBody = body.trimStart();
+                      const leadingHeadingMatch = trimmedBody.match(/^#\s+(.+)$/m);
+                      if (leadingHeadingMatch && leadingHeadingMatch[1].trim() === title) {
+                        body = body.replace(/^\s*#\s+[^\r\n]+[\r\n]*/m, "");
+                      }
+
+                      content = `---${frontmatter}\n---\n` + body;
                     }
-
-                    content = `---${frontmatter}\n---\n` + body;
                   }
+
+                  fs.writeFileSync(fullPath, content, "utf8");
                 }
-
-                fs.writeFileSync(fullPath, content, 'utf8');
               }
             }
-          }
 
-          processDirectory(path.join(process.cwd(), '.starlight-build/src/content/docs'));
-          EOF
+            processDirectory(path.join(process.cwd(), ".starlight-build/src/content/docs"));
+          '
 
       - name: Build static site
         run: |
@@ -176,4 +174,3 @@ EOF
 
           echo "==> 2. Deploying build artifacts to Cloudflare Pages..."
           npx wrangler pages deploy .starlight-build/dist --project-name="$CLOUDFLARE_PROJECT_NAME" --branch=main
-
