@@ -81,9 +81,13 @@ jobs:
                   starlight({
                     title: process.env.SITE_TITLE || "The DAO",
                     ${hasLogo ? `logo: { src: "${hasLogo}" },` : ""}
-                    social: {
-                      github: "https://github.com/excing/TheDAO",
-                    },
+                    social: [
+                      {
+                        icon: "github",
+                        label: "GitHub",
+                        href: "https://github.com/excing/TheDAO",
+                      },
+                    ],
                   }),
                 ],
               });`;

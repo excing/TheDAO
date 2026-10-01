@@ -35,10 +35,18 @@ export default defineConfig({
       logo: {
         src: './src/assets/logo.svg',
       },
-      social: {
-        github: 'https://github.com/excing/TheDAO',
-        twitter: 'https://x.com/courage_exc',
-      },
+      social: [
+        {
+          icon: 'github',
+          label: 'GitHub',
+          href: 'https://github.com/excing/TheDAO',
+        },
+        {
+          icon: 'x.com',
+          label: 'X (Twitter)',
+          href: 'https://x.com/courage_exc',
+        },
+      ],
     }),
   ],
 });
