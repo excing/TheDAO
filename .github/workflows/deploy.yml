@@ -50,22 +50,49 @@ jobs:
             fi
           fi
 
-          echo "==> 5. Configuring Starlight with automatic directory-based sidebar..."
-          cat << 'EOF' > .starlight-build/astro.config.mjs
-          import { defineConfig } from 'astro/config';
-          import starlight from '@astrojs/starlight';
+          echo "==> 5. Syncing branding assets if present..."
+          mkdir -p .starlight-build/src/assets
+          for ext in svg png webp; do
+            if [ -f "logo.${ext}" ]; then
+              cp "logo.${ext}" .starlight-build/src/assets/
+            fi
+            if [ -f "assets/logo.${ext}" ]; then
+              cp "assets/logo.${ext}" .starlight-build/src/assets/
+            fi
+          done
 
-          export default defineConfig({
-            integrations: [
-              starlight({
-                title: process.env.SITE_TITLE || 'The DAO',
-                // Omitting `sidebar` activates automatic directory-based sidebar generation
-              }),
-            ],
-          });
-          EOF
+          echo "==> 6. Configuring Starlight (custom astro.config.mjs or fallback)..."
+          if [ -f astro.config.mjs ]; then
+            echo "Using custom astro.config.mjs from repository root..."
+            cp astro.config.mjs .starlight-build/astro.config.mjs
+          else
+            echo "No custom astro.config.mjs found, generating progressive default config..."
+            cat << 'EOF' > .starlight-build/astro.config.mjs
+            import { defineConfig } from 'astro/config';
+            import starlight from '@astrojs/starlight';
+            import fs from 'node:fs';
 
-          echo "==> 6. Normalizing Frontmatter metadata and deduplicating main headings..."
+            const detectedLogo = fs.existsSync('./src/assets/logo.svg')
+              ? './src/assets/logo.svg'
+              : fs.existsSync('./src/assets/logo.png')
+              ? './src/assets/logo.png'
+              : undefined;
+
+            export default defineConfig({
+              integrations: [
+                starlight({
+                  title: process.env.SITE_TITLE || 'The DAO',
+                  ...(detectedLogo ? { logo: { src: detectedLogo } } : {}),
+                  social: {
+                    github: 'https://github.com/excing/TheDAO',
+                  },
+                }),
+              ],
+            });
+            EOF
+          fi
+
+          echo "==> 7. Normalizing Frontmatter metadata and deduplicating main headings..."
           node - << 'EOF'
           const fs = require('fs');
           const path = require('path');
