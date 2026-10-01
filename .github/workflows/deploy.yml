@@ -39,7 +39,7 @@ jobs:
           rm -rf .starlight-build/src/content/docs/*
 
           echo "==> 3. Syncing repository markdown files and assets..."
-          rsync -av --exclude='.git' --exclude='.github' --exclude='.starlight-build' ./ .starlight-build/src/content/docs/
+          rsync -av --exclude='.git' --exclude='.github' --exclude='.starlight-build' --exclude='astro.config.mjs' ./ .starlight-build/src/content/docs/
 
           echo "==> 4. Ensuring single landing page and preventing duplicate entries..."
           if [ -f .starlight-build/src/content/docs/README.md ]; then
@@ -68,28 +68,28 @@ jobs:
           else
             echo "No custom astro.config.mjs found, generating progressive default config..."
             cat << 'EOF' > .starlight-build/astro.config.mjs
-            import { defineConfig } from 'astro/config';
-            import starlight from '@astrojs/starlight';
-            import fs from 'node:fs';
+import { defineConfig } from 'astro/config';
+import starlight from '@astrojs/starlight';
+import fs from 'node:fs';
 
-            const detectedLogo = fs.existsSync('./src/assets/logo.svg')
-              ? './src/assets/logo.svg'
-              : fs.existsSync('./src/assets/logo.png')
-              ? './src/assets/logo.png'
-              : undefined;
+const detectedLogo = fs.existsSync('./src/assets/logo.svg')
+  ? './src/assets/logo.svg'
+  : fs.existsSync('./src/assets/logo.png')
+  ? './src/assets/logo.png'
+  : undefined;
 
-            export default defineConfig({
-              integrations: [
-                starlight({
-                  title: process.env.SITE_TITLE || 'The DAO',
-                  ...(detectedLogo ? { logo: { src: detectedLogo } } : {}),
-                  social: {
-                    github: 'https://github.com/excing/TheDAO',
-                  },
-                }),
-              ],
-            });
-            EOF
+export default defineConfig({
+  integrations: [
+    starlight({
+      title: process.env.SITE_TITLE || 'The DAO',
+      ...(detectedLogo ? { logo: { src: detectedLogo } } : {}),
+      social: {
+        github: 'https://github.com/excing/TheDAO',
+      },
+    }),
+  ],
+});
+EOF
           fi
 
           echo "==> 7. Normalizing Frontmatter metadata and deduplicating main headings..."
