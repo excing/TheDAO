@@ -41,9 +41,13 @@ jobs:
           echo "==> 3. Syncing repository markdown files and assets..."
           rsync -av --exclude='.git' --exclude='.github' --exclude='.starlight-build' ./ .starlight-build/src/content/docs/
 
-          echo "==> 4. Ensuring landing page exists..."
-          if [ ! -f .starlight-build/src/content/docs/index.md ] && [ ! -f .starlight-build/src/content/docs/index.mdx ] && [ -f .starlight-build/src/content/docs/README.md ]; then
-            cp .starlight-build/src/content/docs/README.md .starlight-build/src/content/docs/index.md
+          echo "==> 4. Ensuring single landing page and preventing duplicate entries..."
+          if [ -f .starlight-build/src/content/docs/README.md ]; then
+            if [ ! -f .starlight-build/src/content/docs/index.md ] && [ ! -f .starlight-build/src/content/docs/index.mdx ]; then
+              mv .starlight-build/src/content/docs/README.md .starlight-build/src/content/docs/index.md
+            else
+              rm -f .starlight-build/src/content/docs/README.md
+            fi
           fi
 
           echo "==> 5. Configuring Starlight with automatic directory-based sidebar..."
@@ -61,7 +65,7 @@ jobs:
           });
           EOF
 
-          echo "==> 6. Normalizing Frontmatter metadata for docs schema compatibility..."
+          echo "==> 6. Normalizing Frontmatter metadata and deduplicating main headings..."
           node - << 'EOF'
           const fs = require('fs');
           const path = require('path');
@@ -74,26 +78,45 @@ jobs:
                 processDirectory(fullPath);
               } else if (entry.name.endsWith('.md') || entry.name.endsWith('.mdx')) {
                 let content = fs.readFileSync(fullPath, 'utf8');
-                
-                // Case 1: No frontmatter present
+                let title = '';
+
                 if (!content.startsWith('---')) {
+                  // Case 1: No frontmatter present. Extract H1 or fallback to filename.
                   const headingMatch = content.match(/^#\s+(.+)$/m);
-                  const title = headingMatch ? headingMatch[1].trim() : path.parse(entry.name).name;
-                  content = `---\ntitle: "${title.replace(/"/g, '\\"')}"\n---\n\n` + content;
-                  fs.writeFileSync(fullPath, content, 'utf8');
+                  title = headingMatch ? headingMatch[1].trim() : path.parse(entry.name).name;
+                  let body = content;
+                  if (headingMatch) {
+                    body = body.replace(/^\s*#\s+[^\r\n]+[\r\n]*/m, '');
+                  }
+                  content = `---\ntitle: "${title.replace(/"/g, '\\"')}"\n---\n\n` + body.trimStart();
                 } else {
-                  // Case 2: Frontmatter exists but might lack title
+                  // Case 2: Frontmatter exists. Ensure title is present and strip duplicate H1 from body.
                   const endIdx = content.indexOf('---', 3);
                   if (endIdx !== -1) {
-                    const frontmatter = content.slice(3, endIdx);
-                    if (!/^\s*title\s*:/m.test(frontmatter)) {
-                      const headingMatch = content.slice(endIdx + 3).match(/^#\s+(.+)$/m);
-                      const title = headingMatch ? headingMatch[1].trim() : path.parse(entry.name).name;
-                      content = `---\ntitle: "${title.replace(/"/g, '\\"')}"\n` + frontmatter.trim() + '\n---\n' + content.slice(endIdx + 3);
-                      fs.writeFileSync(fullPath, content, 'utf8');
+                    let frontmatter = content.slice(3, endIdx);
+                    let body = content.slice(endIdx + 3);
+
+                    const titleMatch = frontmatter.match(/^\s*title\s*:\s*["']?(.*?)["']?\s*$/m);
+                    if (titleMatch) {
+                      title = titleMatch[1].trim();
+                    } else {
+                      const headingMatch = body.match(/^#\s+(.+)$/m);
+                      title = headingMatch ? headingMatch[1].trim() : path.parse(entry.name).name;
+                      frontmatter = `\ntitle: "${title.replace(/"/g, '\\"')}"` + frontmatter;
                     }
+
+                    // Remove redundant H1 from body if it matches the page title
+                    const trimmedBody = body.trimStart();
+                    const leadingHeadingMatch = trimmedBody.match(/^#\s+(.+)$/m);
+                    if (leadingHeadingMatch && leadingHeadingMatch[1].trim() === title) {
+                      body = body.replace(/^\s*#\s+[^\r\n]+[\r\n]*/m, '');
+                    }
+
+                    content = `---${frontmatter}\n---\n` + body;
                   }
                 }
+
+                fs.writeFileSync(fullPath, content, 'utf8');
               }
             }
           }
