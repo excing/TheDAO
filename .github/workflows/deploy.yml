@@ -1,0 +1,128 @@
+name: Deploy Quartz Site to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 设置 GITHUB_TOKEN 的权限，允许部署到 GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 限制并发部署，防止多个部署冲突
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Content
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取完整 Git 历史以生成精准的文件创建与修改时间
+
+      - name: Setup GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Checkout Quartz Engine
+        uses: actions/checkout@v4
+        with:
+          repository: jackyzha0/quartz
+          ref: v5
+          path: .quartz-engine
+
+      - name: Relocate Engine to Temp Directory
+        run: |
+          # 将构建引擎移至临时目录，避免内容源目录发生递归扫描或受到引擎文件干扰
+          mv .quartz-engine "${{ runner.temp }}/quartz-engine"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Quartz Dependencies
+        run: npm ci
+        working-directory: ${{ runner.temp }}/quartz-engine
+
+      - name: Prepare Content & Config
+        run: |
+          # 若工作区根目录提供了自定义 Quartz 配置文件，则覆盖默认配置 (v5 默认采用 yaml 配置)
+          [ -f "$GITHUB_WORKSPACE/quartz.config.yaml" ] && cp "$GITHUB_WORKSPACE/quartz.config.yaml" "${{ runner.temp }}/quartz-engine/quartz.config.yaml"
+          [ -f "$GITHUB_WORKSPACE/quartz.config.ts" ] && cp "$GITHUB_WORKSPACE/quartz.config.ts" "${{ runner.temp }}/quartz-engine/quartz.config.ts"
+          [ -f "$GITHUB_WORKSPACE/quartz.layout.ts" ] && cp "$GITHUB_WORKSPACE/quartz.layout.ts" "${{ runner.temp }}/quartz-engine/quartz.layout.ts"
+
+          # Logo：支持 logo.svg（优先）或 logo.png，二选一即可。
+          # Header 直接使用源文件；favicon 仍需要 PNG，因此 SVG 会用引擎自带的
+          # sharp 渲染一份 logo.png（供 README 展示）和 static/icon.png（供 favicon）。
+          LOGO_URL=""
+          if [ -f "$GITHUB_WORKSPACE/logo.svg" ]; then
+            LOGO_URL="./logo.svg"
+            (cd "${{ runner.temp }}/quartz-engine" && node --input-type=module -e '
+              import sharp from "sharp"
+              const [src, outPng, outIcon] = process.argv.slice(1)
+              const render = (size) =>
+                sharp(src).resize(size, size, {
+                  fit: "contain",
+                  background: { r: 0, g: 0, b: 0, alpha: 0 },
+                }).png()
+              await render(512).toFile(outPng)
+              await render(128).toFile(outIcon)
+            ' "$GITHUB_WORKSPACE/logo.svg" "$GITHUB_WORKSPACE/logo.png" "${{ runner.temp }}/quartz-engine/quartz/static/icon.png")
+          elif [ -f "$GITHUB_WORKSPACE/logo.png" ]; then
+            LOGO_URL="./logo.png"
+            cp "$GITHUB_WORKSPACE/logo.png" "${{ runner.temp }}/quartz-engine/quartz/static/icon.png"
+          else
+            echo "::warning::No logo.svg or logo.png found in the repository root."
+          fi
+
+          if [ -f "$GITHUB_WORKSPACE/custom.scss" ]; then
+            cp "$GITHUB_WORKSPACE/custom.scss" "${{ runner.temp }}/quartz-engine/quartz/styles/custom.scss"
+            if [ -n "$LOGO_URL" ]; then
+              printf '\n:root { --logo-image: url("%s"); }\n' "$LOGO_URL" >> "${{ runner.temp }}/quartz-engine/quartz/styles/custom.scss"
+            fi
+          fi
+
+          # Quartz 默认以 index.md 为首页，若根目录不存在 index.md 且存在 README.md，则临时复制一份作为首页
+          if [ ! -f "$GITHUB_WORKSPACE/index.md" ] && [ -f "$GITHUB_WORKSPACE/README.md" ]; then
+            echo "index.md not found, creating from README.md"
+            cp "$GITHUB_WORKSPACE/README.md" "$GITHUB_WORKSPACE/index.md"
+          fi
+
+      - name: Install Quartz Plugins
+        run: npx quartz plugin install
+        working-directory: ${{ runner.temp }}/quartz-engine
+
+      - name: Build Quartz Site
+        run: |
+          BASE_PATH="${{ steps.pages.outputs.base_path }}"
+          if [ -z "$BASE_PATH" ]; then
+            BASE_PATH="/"
+          fi
+          # -d 指定内容源目录为工作区根目录
+          # -o 指定编译静态文件输出目录到工作区 public
+          # --baseDir 适配 GitHub Pages 仓库子路径
+          npx quartz build -d "$GITHUB_WORKSPACE" -o "$GITHUB_WORKSPACE/public" --baseDir "$BASE_PATH"
+        working-directory: ${{ runner.temp }}/quartz-engine
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
