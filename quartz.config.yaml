@@ -7,13 +7,13 @@
 #   - 内容页 emitter 插件：content-page / folder-page / tag-page
 #     （缺少时不会生成 index.html，站点根路径会 404）
 configuration:
-  pageTitle: FastDeploy
-  pageTitleSuffix: " | FastDeploy"
+  pageTitle: TheDAO
+  pageTitleSuffix: " | TheDAO - 去中心化与去所有制的全新区块链思想"
   enableSPA: true
   enablePopovers: true
   analytics: null
   locale: zh-CN
-  baseUrl: excing.github.io/FastDeployTemplate
+  baseUrl: excing.github.io/TheDAO
   # 内容是仓库根目录，需排除仓库自身的文件，避免它们被当作页面
   # 或静态资源复制进站点（例如 /quartz.config.yaml、/readme）。
   ignorePatterns:
